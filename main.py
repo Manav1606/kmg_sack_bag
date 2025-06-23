@@ -13,7 +13,7 @@ from logger import logger
 import requests
 
 # Load the YOLO model with ByteTrack enabled
-model = YOLO("path to model")
+model = YOLO("sackbag_75ep140625.pt")
 
 class VideoCaptureBuffer:   # For resolving frame distortion
     def __init__(self, video_source):
@@ -77,14 +77,13 @@ class SackbagDetectorApp:
         self.start_time = None
         self.csv_filename = "sackbag_detection_log.csv"
         # Line coordinates(586, 167), (1065, 249)
-        self.line_x1 = 414
-        self.line_y1 = 2
-        self.line_x2 = 484
-        self.line_y2 = 617
-        self.min_movement_threshold = 1              
-        self.distance_threshold = 200  
-        self.max_inactive_frames = 6
-        self.frame_skip_interval = 1
+        self.line_x1 = 458
+        self.line_y1 = 512
+        self.line_x2 = 507
+        self.line_y2 = 5
+        self.min_movement_threshold = 2
+        self.distance_threshold = 120
+        self.max_inactive_frames = 3
 
         self.db_handler = DatabaseHandler()
 
@@ -93,7 +92,7 @@ class SackbagDetectorApp:
         self.scheduler_thread.start()
 
         # Thread for posting to status API every 15 minutes
-        self.status_api_url = "null"
+        self.status_api_url = "http://exhibitapi.ttpltech.in/systemstatus"
         self.status_thread = threading.Thread(target=self.post_status_periodically, daemon=True)
         self.status_thread.start()
 
@@ -358,10 +357,10 @@ class SackbagDetectorApp:
 # Checks if the object has crossed the line by comparing the signs of the previous and current sides
 # If it has crossed, update the counters and mark the ID as counted
                     if prev_side < 0 and curr_side >= 0:
-                        self.counter_left_to_right += 1
+                        self.counter_right_to_left += 1
                         self.counted_ids.add(obj_id)
                     elif prev_side > 0 and curr_side <= 0:
-                        self.counter_right_to_left += 1
+                        self.counter_left_to_righ += 1
                         self.counted_ids.add(obj_id)
                 else:
                     self.last_seen[obj_id] = self.frame_count
@@ -396,9 +395,9 @@ class SackbagDetectorApp:
 
     def run_scheduler(self):
         """Runs the scheduler to post pending entries every 15 minutes."""
-        # schedule.every(1).minutes.do(self.post_pending_entries)
+        schedule.every(1).minutes.do(self.post_pending_entries)
         while True:
-           # schedule.run_pending()
+            schedule.run_pending()
             time.sleep(1)
 
     def post_pending_entries(self):
@@ -407,7 +406,8 @@ class SackbagDetectorApp:
 
 if __name__ == "__main__":
 
-    video_path = "path to video file or RTSP stream"
+   # video_path = "path to video file or RTSP stream"
+    video_path = "D:\mahesh\kmg\kmg2_ch2_20250614122417_20250614124439.mp4"
     conf_threshold = 0.2
     iou_threshold = 0.3
     image_size = 640
