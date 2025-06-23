@@ -1,0 +1,13 @@
+{
+    "rtsp": {
+        "SB01": "D:\\mahesh\\m.mp4"
+    },
+    "loi": {
+        "SB01": "[(241, 197), (775, 156)]"
+    },
+    "detection": {
+        "conf_threshold": 0.4,
+        "iou_threshold": 0.3,
+        "image_size": 640
+    }
+}
