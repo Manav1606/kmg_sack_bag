@@ -326,6 +326,7 @@ class SackbagDetectorApp:
                 if obj_id in self.tracked_positions:
                     prev_cx = self.tracked_positions[obj_id][0]
                     self.last_seen[obj_id] = self.frame_count
+                    # print(f"obj_id:{obj_id} , prev_cx: {prev_cx} , self.line_x1: {self.line_x1} , cx:{cx}")
 
                     # previous code logic for determining crossing direction
                     '''if prev_cx < self.line_x1 <= cx and abs(cx - prev_cx) > self.min_movement_threshold:
