@@ -84,6 +84,7 @@ class SackbagDetectorApp:
         self.min_movement_threshold = 2
         self.distance_threshold = 120
         self.max_inactive_frames = 3
+        self.frame_skip_interval = 1
 
         self.db_handler = DatabaseHandler()
 
@@ -406,7 +407,7 @@ class SackbagDetectorApp:
 
 if __name__ == "__main__":
 
-   # video_path = "path to video file or RTSP stream"
+   # video_path = "rtsp://admin:admin%23123@192.168.0.110:554/cam/realmonitor?channel=1&subtype=0"
     video_path = "D:\mahesh\kmg\kmg2_ch2_20250614122417_20250614124439.mp4"
     conf_threshold = 0.2
     iou_threshold = 0.3
