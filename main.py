@@ -13,7 +13,7 @@ from logger import logger
 import requests
 
 # Load the YOLO model with ByteTrack enabled
-model = YOLO("sackbag_75ep140625.pt")
+model = YOLO("best.pt")
 
 class VideoCaptureBuffer:   # For resolving frame distortion
     def __init__(self, video_source):
