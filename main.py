@@ -24,6 +24,7 @@ class VideoCaptureBuffer:   # For resolving frame distortion
         self.lock = threading.Lock()
         self.is_rtsp = isinstance(video_source, str) and video_source.startswith("rtsp")
 
+
         # Start the frame updating thread
         self.thread = threading.Thread(target=self.update_frames, daemon=True)
         self.thread.start()
@@ -75,7 +76,7 @@ class SackbagDetectorApp:
         self.is_running = False
         self.start_time = None
         self.csv_filename = "sackbag_detection_log.csv"
-        # Line coordinates
+        # Line coordinates(586, 167), (1065, 249)
         self.line_x1 = 458
         self.line_y1 = 512
         self.line_x2 = 507
@@ -95,12 +96,16 @@ class SackbagDetectorApp:
         self.status_api_url = "http://exhibitapi.ttpltech.in/systemstatus"
         self.status_thread = threading.Thread(target=self.post_status_periodically, daemon=True)
         self.status_thread.start()
-
-
         self.frame_count = 0
-
         self.init_gui()
+        
+# to calculate cross product of AB and AP, where A is the line start, B is the line end, and P is the point
+# This will help determine which side of the line the point is on
+# The function returns a positive value if the point is on the left side of the line
+# a negative value if the point is on the right side, and zero if it is on the line.
 
+    def get_side(self, x1, y1, x2, y2, px, py):
+        return (x2 - x1)*(py - y1) - (y2 - y1)*(px - x1)
 
     def post_status_periodically(self):
         """Post status to the API every 15 minutes."""
@@ -287,6 +292,7 @@ class SackbagDetectorApp:
 
                 # Skip objects outside the ROI
                 if not (roi_left <= cx <= roi_right and roi_top <= cy <= roi_bottom):
+                    print("MCC")
                     continue
 
                 # Calculate distance from previous positions
@@ -320,10 +326,10 @@ class SackbagDetectorApp:
                 if obj_id in self.tracked_positions:
                     prev_cx = self.tracked_positions[obj_id][0]
                     self.last_seen[obj_id] = self.frame_count
+                    # print(f"obj_id:{obj_id} , prev_cx: {prev_cx} , self.line_x1: {self.line_x1} , cx:{cx}")
 
-                    # print(f"obj_id:{obj_id} , prev_cx: {prev_cx}  , self.line_x1: {self.line_x1}  ,  cx:{cx}")
-
-                    if prev_cx < self.line_x1 <= cx and abs(cx - prev_cx) > self.min_movement_threshold:
+                    # previous code logic for determining crossing direction
+                    '''if prev_cx < self.line_x1 <= cx and abs(cx - prev_cx) > self.min_movement_threshold:
                         self.counter_left_to_right += 1
                         self.direction_state[obj_id] = "left_to_right"
                         self.db_handler.insert_crossing(in_count=True, out_count=False)
@@ -331,9 +337,39 @@ class SackbagDetectorApp:
                         self.counter_right_to_left += 1
                         self.direction_state[obj_id] = "right_to_left"
                         self.db_handler.insert_crossing(in_count=False, out_count=True)
+                    else:
+                        self.last_seen[obj_id] = self.frame_count
+'''
+                    if distances and min(distances) < self.distance_threshold:
+                     obj_id = next(
+                        id_ for id_, (prev_cx, prev_cy) in self.tracked_positions.items()
+                        if np.linalg.norm(np.array((cx, cy)) - np.array((prev_cx, prev_cy))) < self.distance_threshold
+                    )
+                else:
+                    obj_id = self.current_id
+                    self.current_id += 1
+                if obj_id in self.counted_ids:
+                    continue
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 255), 2)
+                cv2.circle(frame, (cx, cy), 5, (255, 0, 0), -1)
+                cv2.putText(frame, f"ID: {obj_id}", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+
+                if obj_id in self.tracked_positions:
+                    prev_cx, prev_cy = self.tracked_positions[obj_id]
+                    self.last_seen[obj_id] = self.frame_count
+                    prev_side = self.get_side(self.line_x1, self.line_y1, self.line_x2, self.line_y2, prev_cx, prev_cy)
+                    curr_side = self.get_side(self.line_x1, self.line_y1, self.line_x2, self.line_y2, cx, cy)
+
+# Checks if the object has crossed the line by comparing the signs of the previous and current sides
+# If it has crossed, update the counters and mark the ID as counted
+                    if prev_side < 0 and curr_side >= 0:
+                        self.counter_right_to_left += 1
+                        self.counted_ids.add(obj_id)
+                    elif prev_side > 0 and curr_side <= 0:
+                        self.counter_left_to_righ += 1
+                        self.counted_ids.add(obj_id)
                 else:
                     self.last_seen[obj_id] = self.frame_count
-
                 self.tracked_positions[obj_id] = (cx, cy)
 
         inactive_ids = [id_ for id_, last_frame in self.last_seen.items() if self.frame_count - last_frame > self.max_inactive_frames]
@@ -361,20 +397,18 @@ class SackbagDetectorApp:
         self.cap.release()
         cv2.destroyAllWindows()
         self.window.destroy()
-
     def run_scheduler(self):
         """Runs the scheduler to post pending entries every 15 minutes."""
         schedule.every(1).minutes.do(self.post_pending_entries)
         while True:
             schedule.run_pending()
             time.sleep(1)
-
     def post_pending_entries(self):
         """Fetch and post pending entries to the API and update their status."""
         self.db_handler.post_pending_entries()
 
 if __name__ == "__main__":
-    # video_path = "rtsp://admin:admin%23123@192.168.0.110:554/cam/realmonitor?channel=1&subtype=0"  # Path to the video file
+   # video_path = "rtsp://admin:admin%23123@192.168.0.110:554/cam/realmonitor?channel=1&subtype=0"
     video_path = "D:\mahesh\kmg\kmg2_ch2_20250614122417_20250614124439.mp4"
     conf_threshold = 0.2
     iou_threshold = 0.3
