@@ -15,6 +15,7 @@ import requests
 # Load the YOLO model with ByteTrack enabled
 model = YOLO("best.pt")
 
+
 class VideoCaptureBuffer:   # For resolving frame distortion
     def __init__(self, video_source):
         self.video_source = video_source
@@ -64,10 +65,9 @@ class SackbagDetectorApp:
         self.iou_threshold = iou_threshold
         self.image_size = image_size
         self.cap = VideoCaptureBuffer(video_path)
-
         # Detection and tracking parameters
-        self.counter_left_to_right = 0
         self.counter_right_to_left = 0
+        self.counter_left_to_right = 0
         self.tracked_positions = {}
         self.counted_ids = set()
         self.direction_state = {}
@@ -219,7 +219,7 @@ class SackbagDetectorApp:
             self.stop_time_label.config(text=f"{stop_time.strftime('%H:%M:%S')}")
             self.start_time_label.config(text=f"{self.start_time.strftime('%H:%M:%S')}")  # Keep the start time label
 
-            self.counter_label.config(text=f"IN: {self.counter_left_to_right}   OUT: {self.counter_right_to_left}")
+            self.counter_label.config(text=f"IN: {self.counter_right_to_left}   OUT: {self.counter_left_to_right}")
 
             # Re-enable the Start button
             self.start_button.config(state="normal")
@@ -233,8 +233,8 @@ class SackbagDetectorApp:
             "Start Time": [start_time.strftime("%H:%M:%S")],
             "Stop Time": [stop_time.strftime("%H:%M:%S")],
             "Date": [date],
-            "IN": [self.counter_left_to_right],
-            "OUT": [self.counter_right_to_left]
+            "IN": [self.counter_right_to_left],
+            "OUT": [self.counter_left_to_right]
         }
         df = pd.DataFrame(data)
 
@@ -378,7 +378,7 @@ class SackbagDetectorApp:
             self.last_seen.pop(id_, None)
             self.direction_state.pop(id_, None)
 
-        self.counter_label.config(text=f"IN: {self.counter_left_to_right}   OUT: {self.counter_right_to_left}")
+        self.counter_label.config(text=f"IN: {self.counter_right_to_left}   OUT: {self.counter_left_to_right}")
         cv2.line(frame, (self.line_x1, self.line_y1), (self.line_x2, self.line_y2), (0, 255, 0), 2)
         cv2.rectangle(frame, (roi_left, roi_top), (roi_right, roi_bottom), (255, 0, 0), 2)
 
