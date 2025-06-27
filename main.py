@@ -13,7 +13,7 @@ from logger import logger
 import requests
 
 # Load the YOLO model with ByteTrack enabled
-model = YOLO("best.pt")
+model = YOLO("sackbags_75epochs_270625.pt")
 
 
 class VideoCaptureBuffer:   # For resolving frame distortion
@@ -366,7 +366,7 @@ class SackbagDetectorApp:
                         self.counter_right_to_left += 1
                         self.counted_ids.add(obj_id)
                     elif prev_side > 0 and curr_side <= 0:
-                        self.counter_left_to_righ += 1
+                        self.counter_left_to_right += 1
                         self.counted_ids.add(obj_id)
                 else:
                     self.last_seen[obj_id] = self.frame_count
@@ -408,8 +408,8 @@ class SackbagDetectorApp:
         self.db_handler.post_pending_entries()
 
 if __name__ == "__main__":
-   # video_path = "rtsp://admin:admin%23123@192.168.0.110:554/cam/realmonitor?channel=1&subtype=0"
-    video_path = "D:\mahesh\kmg\kmg2_ch2_20250614122417_20250614124439.mp4"
+    video_path = "rtsp://admin:admin%23123@192.168.0.110:554/cam/realmonitor?channel=1&subtype=0"
+    #video_path = "D:\mahesh\kmg\kmg2_ch2_20250614122417_20250614124439.mp4"
     conf_threshold = 0.2
     iou_threshold = 0.3
     image_size = 640
