@@ -13,8 +13,7 @@ from logger import logger
 import requests
 
 # Load the YOLO model with ByteTrack enabled
-model = YOLO("sackbags_75epochs_270625.pt")
-
+model = YOLO("sackbag_75epochs_270625.pt")
 
 class VideoCaptureBuffer:   # For resolving frame distortion
     def __init__(self, video_source):
@@ -65,9 +64,10 @@ class SackbagDetectorApp:
         self.iou_threshold = iou_threshold
         self.image_size = image_size
         self.cap = VideoCaptureBuffer(video_path)
+
         # Detection and tracking parameters
-        self.counter_right_to_left = 0
         self.counter_left_to_right = 0
+        self.counter_right_to_left = 0
         self.tracked_positions = {}
         self.counted_ids = set()
         self.direction_state = {}
@@ -221,7 +221,7 @@ class SackbagDetectorApp:
             self.stop_time_label.config(text=f"{stop_time.strftime('%H:%M:%S')}")
             self.start_time_label.config(text=f"{self.start_time.strftime('%H:%M:%S')}")  # Keep the start time label
 
-            self.counter_label.config(text=f"IN: {self.counter_right_to_left}   OUT: {self.counter_left_to_right}")
+            self.counter_label.config(text=f"IN: {self.counter_left_to_right}   OUT: {self.counter_right_to_left}")
 
             # Re-enable the Start button
             self.start_button.config(state="normal")
@@ -246,8 +246,8 @@ class SackbagDetectorApp:
             "Start Time": [start_time.strftime("%H:%M:%S")],
             "Stop Time": [stop_time.strftime("%H:%M:%S")],
             "Date": [date],
-            "IN": [self.counter_right_to_left],
-            "OUT": [self.counter_left_to_right]
+            "IN": [self.counter_left_to_right],
+            "OUT": [self.counter_right_to_left]
         }
         df = pd.DataFrame(data)
 
@@ -282,7 +282,6 @@ class SackbagDetectorApp:
             iou=self.iou_threshold,
             imgsz=self.image_size,
             tracker="bytetrack.yaml",
-            persist=True,
             verbose=False
         )
 
@@ -300,8 +299,6 @@ class SackbagDetectorApp:
         # roi_right = self.line_x2 + 500
 
         for r in results:
-            ids = [int(box.id.item()) for box in r.boxes if box.id is not None]
-            print(f"Detected IDs: {ids}")
             for box in r.boxes:
                 if box.id is None:  
                     continue
@@ -317,22 +314,21 @@ class SackbagDetectorApp:
                 #     continue
 
                 # Calculate distance from previous positions
-                # distances = [
-                #     np.linalg.norm(np.array((cx, cy)) - np.array((prev_cx, prev_cy)))
-                #     for prev_cx, prev_cy in self.tracked_positions.values()
-                # ]
+                distances = [
+                    np.linalg.norm(np.array((cx, cy)) - np.array((prev_cx, prev_cy)))
+                    for prev_cx, prev_cy in self.tracked_positions.values()
+                ]
 
-                # # Use existing ID if close enough, else create new one
-                # if distances and min(distances) < self.distance_threshold:
-                #     obj_id = next(
-                #         id_ for id_, (prev_cx, prev_cy) in self.tracked_positions.items()
-                #         if np.linalg.norm(np.array((cx, cy)) - np.array((prev_cx, prev_cy))) < self.distance_threshold
-                #     )
-                # else:
-                #     obj_id = self.current_id
-                #     self.current_id += 1
-                
-                obj_id = int(box.id.item())
+                # Use existing ID if close enough, else create new one
+                if distances and min(distances) < self.distance_threshold:
+                    obj_id = next(
+                        id_ for id_, (prev_cx, prev_cy) in self.tracked_positions.items()
+                        if np.linalg.norm(np.array((cx, cy)) - np.array((prev_cx, prev_cy))) < self.distance_threshold
+                    )
+                else:
+                    obj_id = self.current_id
+                    self.current_id += 1
+
                 # Skip already-counted objects
                 if obj_id in self.counted_ids:
                     continue
@@ -344,9 +340,34 @@ class SackbagDetectorApp:
                 # Display obj_id above the bounding box
                 cv2.putText(frame, f"ID: {obj_id}", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
 
-                
-                # if obj_id in self.counted_ids:
-                #     continue
+                # Object within ROI, proceed with line crossing logic
+                if obj_id in self.tracked_positions:
+                    prev_cx = self.tracked_positions[obj_id][0]
+                    self.last_seen[obj_id] = self.frame_count
+                    # print(f"obj_id:{obj_id} , prev_cx: {prev_cx} , self.line_x1: {self.line_x1} , cx:{cx}")
+
+                    # previous code logic for determining crossing direction
+                    '''if prev_cx < self.line_x1 <= cx and abs(cx - prev_cx) > self.min_movement_threshold:
+                        self.counter_left_to_right += 1
+                        self.direction_state[obj_id] = "left_to_right"
+                        self.db_handler.insert_crossing(in_count=True, out_count=False)
+                    elif prev_cx > self.line_x1 >= cx and abs(cx - prev_cx) > self.min_movement_threshold:
+                        self.counter_right_to_left += 1
+                        self.direction_state[obj_id] = "right_to_left"
+                        self.db_handler.insert_crossing(in_count=False, out_count=True)
+                    else:
+                        self.last_seen[obj_id] = self.frame_count
+'''
+                    if distances and min(distances) < self.distance_threshold:
+                     obj_id = next(
+                        id_ for id_, (prev_cx, prev_cy) in self.tracked_positions.items()
+                        if np.linalg.norm(np.array((cx, cy)) - np.array((prev_cx, prev_cy))) < self.distance_threshold
+                    )
+                else:
+                    obj_id = self.current_id
+                    self.current_id += 1
+                if obj_id in self.counted_ids:
+                    continue
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 255), 2)
                 cv2.circle(frame, (cx, cy), 5, (255, 0, 0), -1)
                 cv2.putText(frame, f"ID: {obj_id}", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
@@ -362,27 +383,27 @@ class SackbagDetectorApp:
                     if prev_side < 0 and curr_side >= 0:
                         self.counter_right_to_left += 1
                         self.counted_ids.add(obj_id)
-                        # self.db_handler.insert_crossing(in_count=False, out_count=True)
+                        self.db_handler.insert_crossing(in_count=False, out_count=True)
                         self.direction_state[obj_id] = "right_to_left"
                     elif prev_side > 0 and curr_side <= 0:
                         self.counter_left_to_right += 1
                         self.counted_ids.add(obj_id)
-                        # self.db_handler.insert_crossing(in_count=True, out_count=False)
+                        self.db_handler.insert_crossing(in_count=True, out_count=False)
                         self.direction_state[obj_id] = "left_to_right"
                 else:
                     self.last_seen[obj_id] = self.frame_count
                 self.tracked_positions[obj_id] = (cx, cy)
 
-        # inactive_ids = [id_ for id_, last_frame in self.last_seen.items() if self.frame_count - last_frame > self.max_inactive_frames]
-        # for id_ in inactive_ids:
-        #     self.tracked_positions.pop(id_, None)
-        #     self.last_seen.pop(id_, None)
-        #     self.direction_state.pop(id_, None)
+        inactive_ids = [id_ for id_, last_frame in self.last_seen.items() if self.frame_count - last_frame > self.max_inactive_frames]
+        for id_ in inactive_ids:
+            self.tracked_positions.pop(id_, None)
+            self.last_seen.pop(id_, None)
+            self.direction_state.pop(id_, None)
 
-        self.counter_label.config(text=f"IN: {self.counter_right_to_left}   OUT: {self.counter_left_to_right}")
+        self.counter_label.config(text=f"IN: {self.counter_left_to_right}   OUT: {self.counter_right_to_left}")
         cv2.line(frame, (self.line_x1, self.line_y1), (self.line_x2, self.line_y2), (0, 255, 0), 2)
         # cv2.rectangle(frame, (roi_left, roi_top), (roi_right, roi_bottom), (255, 0, 0), 2)
-        
+
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         img = Image.fromarray(frame_rgb)
         imgtk = ImageTk.PhotoImage(image=img)
@@ -409,8 +430,8 @@ class SackbagDetectorApp:
         self.db_handler.post_pending_entries()
 
 if __name__ == "__main__":
-    video_path = "rtsp://admin:admin%23123@192.168.0.110:554/cam/realmonitor?channel=1&subtype=0"
-    #video_path = "D:\mahesh\kmg\kmg2_ch2_20250614122417_20250614124439.mp4"
+    video_path = "rtsp://admin:admin%23123@192.168.0.111:554/cam/realmonitor?channel=1&subtype=0"
+    # video_path = "D:\\mahesh\\new.mp4"
     conf_threshold = 0.2
     iou_threshold = 0.3
     image_size = 640
