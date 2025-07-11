@@ -13,7 +13,40 @@ from logger import logger
 import requests
 
 # Load the YOLO model with ByteTrack enabled
-model = YOLO("sackbag_75epochs_270625.pt")
+model = YOLO("sackbag_75epochs_270625_3.pt")
+def letterbox(img, new_shape=(640, 640), color=(114, 114, 114), auto=False, scaleFill=False, scaleup=True):
+    """
+    Resize and pad image while meeting stride-multiple constraints.
+    From original YOLOv5/Ultralytics implementation.
+    """
+    shape = img.shape[:2]  # current shape [height, width]
+    if isinstance(new_shape, int):
+        new_shape = (new_shape, new_shape)
+
+    # Scale ratio (new / old)
+    r = min(new_shape[0] / shape[0], new_shape[1] / shape[1])
+    if not scaleup:  # only scale down, do not scale up (for better val mAP)
+        r = min(r, 1.0)
+
+    # Compute padding
+    ratio = r, r  # width, height ratios
+    new_unpad = int(round(shape[1] * r)), int(round(shape[0] * r))
+    dw, dh = new_shape[1] - new_unpad[0], new_shape[0] - new_unpad[1]  # width, height deltas
+    if auto:  # minimum rectangle
+        dw, dh = np.mod(dw, 32), np.mod(dh, 32)  # pad to 32-pixel multiples
+
+    dw /= 2  # divide padding into 2 sides
+    dh /= 2
+
+    if shape[::-1] != new_unpad:
+        img = cv2.resize(img, new_unpad, interpolation=cv2.INTER_LINEAR)
+
+    top, bottom = int(round(dh - 0.1)), int(round(dh + 0.1))
+    left, right = int(round(dw - 0.1)), int(round(dw + 0.1))
+    img = cv2.copyMakeBorder(img, top, bottom, left, right, cv2.BORDER_CONSTANT, value=color)
+
+    return img, ratio, (dw, dh)
+
 
 class VideoCaptureBuffer:   # For resolving frame distortion
     def __init__(self, video_source):
@@ -77,15 +110,15 @@ class SackbagDetectorApp:
         self.start_time = None
         self.csv_filename = "sackbag_detection_log.csv"
         # Line coordinates(586, 167), (1065, 249)
-        self.line_x1 = 369
-        self.line_y1 = 144
-        self.line_x2 = 957
-        self.line_y2 = 493
+        self.line_x1 = 454
+        self.line_y1 = 52
+        self.line_x2 = 960
+        self.line_y2 = 541
         self.roiPoints =  [{"x": 193.53749084472656, "y": 34.85000038146973}, {"x": 193.53749084472656, "y": 34.85000038146973}, {"x": 1005.5374908447266, "y": 41.85000038146973}, {"x": 1007.5374908447266, "y": 623.8500003814697}, {"x": 1007.5374908447266, "y": 623.8500003814697}, {"x": 229.53749084472656, "y": 620.8500003814697}, {"x": 229.53749084472656, "y": 620.8500003814697}, {"x": 229.53749084472656, "y": 620.8500003814697}, {"x": 193.53749084472656, "y": 34.85000038146973}]
         
         self.min_movement_threshold = 2
         self.distance_threshold = 120
-        self.max_inactive_frames = 3
+        self.max_inactive_frames = 10
         self.frame_skip_interval = 1
 
         self.db_handler = DatabaseHandler()
@@ -199,6 +232,7 @@ class SackbagDetectorApp:
         self.direction_state = {}
         self.last_seen = {}
         self.current_id = 1
+        self.previous_boxes = {}
         self.frame_count = 0
 
         self.start_time_label.config(text=f"{self.start_time.strftime('%H:%M:%S')}")
@@ -256,13 +290,14 @@ class SackbagDetectorApp:
             # print(f"Results saved to {self.csv_filename}")
         except Exception as e:
             logger.error(f"Failed to save results to CSV: {e}")
+    
 
     def update_frame(self):
         """Continuously capture frames and update the Canvas in the Tkinter window."""
         if not self.is_running:
             return
 
-        # Skip frames
+        # Frame skip logic
         if self.frame_count % self.frame_skip_interval != 0:
             self.frame_count += 1
             self.window.after(33, self.update_frame)
@@ -274,142 +309,97 @@ class SackbagDetectorApp:
             logger.error("Waiting for frame...")
             return
 
+        # frameForModel = cv2.resize(frame.copy(), (640, 640))
         frame = cv2.resize(frame, (1200, 640))
+        original_h, original_w = frame.shape[:2]
+        frameForModel, ratio, pad = letterbox(frame.copy(), new_shape=(640, 640), auto=False)
         self.frame_count += 1
+        
+        # Run YOLO tracking
         results = model.track(
-            source=frame,
+            source=frameForModel,
             conf=self.conf_threshold,
             iou=self.iou_threshold,
             imgsz=self.image_size,
             tracker="bytetrack.yaml",
+            persist=True,
             verbose=False
-        )
+        ) 
+        scale_x, scale_y = ratio
+        pad_x, pad_y = pad
 
+        # Draw ROI polygon
         pts_list = [np.array([[int(p["x"]), int(p["y"])] for p in self.roiPoints], dtype=np.int32)]
-        frame = cv2.polylines(frame, pts_list, 
-                    True, (0, 0, 255) , 2)
-        # Define ROI boundaries for the line
-        # roi_left = min(self.line_x1, self.line_x2) - 0
-        # roi_right = max(self.line_x1, self.line_x2) + 0
-        # roi_top = min(self.line_y1, self.line_y2) - 1000
-        # roi_bottom = max(self.line_y1, self.line_y2) + 500
-        # roi_top = self.line_y1 - 0
-        # roi_bottom = self.line_y2 + 0
-        # roi_left = self.line_x1 - 1000
-        # roi_right = self.line_x2 + 500
+        frame = cv2.polylines(frame, pts_list, True, (0, 0, 255), 2)
 
+        # Process each detection
         for r in results:
             for box in r.boxes:
-                if box.id is None:  
+                if box.id is None:
                     continue
 
+                obj_id = int(box.id.item())  # Use ByteTrack-assigned ID
                 x1, y1, x2, y2 = map(int, box.xyxy[0])
+                x1 = int((x1 - pad_x) / scale_x)
+                y1 = int((y1 - pad_y) / scale_y)
+                x2 = int((x2 - pad_x) / scale_x)
+                y2 = int((y2 - pad_y) / scale_y)
+
                 cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
 
                 # Skip objects outside the ROI
                 if not self.objectInsidePolygon(self.roiPoints, (cx, cy)):
                     continue
-                # if not (roi_left <= cx <= roi_right and roi_top <= cy <= roi_bottom):
-                #     print("MCC")
-                #     continue
 
-                # Calculate distance from previous positions
-                distances = [
-                    np.linalg.norm(np.array((cx, cy)) - np.array((prev_cx, prev_cy)))
-                    for prev_cx, prev_cy in self.tracked_positions.values()
-                ]
+                # Draw box and ID
+                color = (0, 255, 0) if obj_id in self.counted_ids else (0, 0, 255)
+                cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+                cv2.circle(frame, (cx, cy), 5, color, -1)
+                cv2.putText(frame, f"ID: {obj_id}", (x1, y1 - 10),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
-                # Use existing ID if close enough, else create new one
-                if distances and min(distances) < self.distance_threshold:
-                    obj_id = next(
-                        id_ for id_, (prev_cx, prev_cy) in self.tracked_positions.items()
-                        if np.linalg.norm(np.array((cx, cy)) - np.array((prev_cx, prev_cy))) < self.distance_threshold
-                    )
-                else:
-                    obj_id = self.current_id
-                    self.current_id += 1
-
-                # Skip already-counted objects
-                if obj_id in self.counted_ids:
-                    continue
-
-                # Draw bounding box, ID, and centroid
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 255), 2)
-                cv2.circle(frame, (cx, cy), 5, (255, 0, 0), -1)
-            
-                # Display obj_id above the bounding box
-                cv2.putText(frame, f"ID: {obj_id}", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
-
-                # Object within ROI, proceed with line crossing logic
-                if obj_id in self.tracked_positions:
-                    prev_cx = self.tracked_positions[obj_id][0]
-                    self.last_seen[obj_id] = self.frame_count
-                    # print(f"obj_id:{obj_id} , prev_cx: {prev_cx} , self.line_x1: {self.line_x1} , cx:{cx}")
-
-                    # previous code logic for determining crossing direction
-                    '''if prev_cx < self.line_x1 <= cx and abs(cx - prev_cx) > self.min_movement_threshold:
-                        self.counter_left_to_right += 1
-                        self.direction_state[obj_id] = "left_to_right"
-                        self.db_handler.insert_crossing(in_count=True, out_count=False)
-                    elif prev_cx > self.line_x1 >= cx and abs(cx - prev_cx) > self.min_movement_threshold:
-                        self.counter_right_to_left += 1
-                        self.direction_state[obj_id] = "right_to_left"
-                        self.db_handler.insert_crossing(in_count=False, out_count=True)
-                    else:
-                        self.last_seen[obj_id] = self.frame_count
-'''
-                    if distances and min(distances) < self.distance_threshold:
-                     obj_id = next(
-                        id_ for id_, (prev_cx, prev_cy) in self.tracked_positions.items()
-                        if np.linalg.norm(np.array((cx, cy)) - np.array((prev_cx, prev_cy))) < self.distance_threshold
-                    )
-                else:
-                    obj_id = self.current_id
-                    self.current_id += 1
-                if obj_id in self.counted_ids:
-                    continue
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 255), 2)
-                cv2.circle(frame, (cx, cy), 5, (255, 0, 0), -1)
-                cv2.putText(frame, f"ID: {obj_id}", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
-
+                # Line crossing detection
                 if obj_id in self.tracked_positions:
                     prev_cx, prev_cy = self.tracked_positions[obj_id]
-                    self.last_seen[obj_id] = self.frame_count
                     prev_side = self.get_side(self.line_x1, self.line_y1, self.line_x2, self.line_y2, prev_cx, prev_cy)
                     curr_side = self.get_side(self.line_x1, self.line_y1, self.line_x2, self.line_y2, cx, cy)
 
-# Checks if the object has crossed the line by comparing the signs of the previous and current sides
-# If it has crossed, update the counters and mark the ID as counted
-                    if prev_side < 0 and curr_side >= 0:
+                    # Check if object has crossed the line
+                    if prev_side < 0 and curr_side >= 0 and obj_id not in self.counted_ids:
                         self.counter_right_to_left += 1
                         self.counted_ids.add(obj_id)
                         self.db_handler.insert_crossing(in_count=False, out_count=True)
                         self.direction_state[obj_id] = "right_to_left"
-                    elif prev_side > 0 and curr_side <= 0:
+
+                    elif prev_side > 0 and curr_side <= 0 and obj_id not in self.counted_ids:
                         self.counter_left_to_right += 1
                         self.counted_ids.add(obj_id)
                         self.db_handler.insert_crossing(in_count=True, out_count=False)
                         self.direction_state[obj_id] = "left_to_right"
-                else:
-                    self.last_seen[obj_id] = self.frame_count
+
+                self.last_seen[obj_id] = self.frame_count
                 self.tracked_positions[obj_id] = (cx, cy)
 
-        inactive_ids = [id_ for id_, last_frame in self.last_seen.items() if self.frame_count - last_frame > self.max_inactive_frames]
+        # Clean up inactive IDs
+        inactive_ids = [id_ for id_, last_seen in self.last_seen.items()
+                        if self.frame_count - last_seen > self.max_inactive_frames]
         for id_ in inactive_ids:
             self.tracked_positions.pop(id_, None)
             self.last_seen.pop(id_, None)
             self.direction_state.pop(id_, None)
 
-        self.counter_label.config(text=f"IN: {self.counter_left_to_right}   OUT: {self.counter_right_to_left}")
+        # Draw crossing line and update GUI
         cv2.line(frame, (self.line_x1, self.line_y1), (self.line_x2, self.line_y2), (0, 255, 0), 2)
-        # cv2.rectangle(frame, (roi_left, roi_top), (roi_right, roi_bottom), (255, 0, 0), 2)
+        self.counter_label.config(text=f"IN: {self.counter_left_to_right}   OUT: {self.counter_right_to_left}")
 
+        # Convert to Tkinter-compatible image
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         img = Image.fromarray(frame_rgb)
         imgtk = ImageTk.PhotoImage(image=img)
         self.canvas.create_image(0, 0, anchor="nw", image=imgtk)
         self.canvas.image = imgtk
 
+        # Call next frame update
         if self.is_running:
             self.window.after(33, self.update_frame)
 
@@ -431,8 +421,8 @@ class SackbagDetectorApp:
 
 if __name__ == "__main__":
     video_path = "rtsp://admin:admin%23123@192.168.0.111:554/cam/realmonitor?channel=1&subtype=0"
-    # video_path = "D:\\mahesh\\new.mp4"
+    # video_path = "D:\\mahesh\\kgm_ch1_8_18_56.mp4"
     conf_threshold = 0.2
-    iou_threshold = 0.3
+    iou_threshold = 0.4
     image_size = 640
     app = SackbagDetectorApp(video_path, conf_threshold, iou_threshold, image_size)
